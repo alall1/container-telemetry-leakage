@@ -1,0 +1,5 @@
+stat -fc %T /sys/fs/cgroup:
+cgroup2fs
+
+mount | grep cgroup:
+cgroup2 on /sys/fs/cgroup type cgroup2 (rw,nosuid,nodev,noexec,relatime,nsdelegate,memory_recursiveprot)
