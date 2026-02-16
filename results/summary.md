@@ -3,7 +3,7 @@
 - Rows used (exit_code=0): 360
 - Features: ['runtime_ms', 'avg_cpu_percent', 'max_mem_mib', 'blk_read_mib', 'blk_write_mib']
 - Classifier: LogisticRegression (scaled)
-- Test accuracy: 1.0000
+- Test accuracy: 0.9889
 - Random chance baseline (~1/4): 0.2500
 
 Artifacts:
