@@ -13,23 +13,17 @@ def cpu_work(N: int) -> None:
         h = hashlib.sha256(buf + h).digest()
 
 def mem_work(N_mib: int) -> None:
-    # Memory-bound: allocate and touch N MiB to force RSS growth
     size = N_mib * 1024 * 1024
     b = bytearray(size)
 
-    # Touch one byte per page to ensure physical backing.
+    # Touch every page
     for i in range(0, size, PAGE):
-        b[i] = (i // PAGE) & 0xFF
+        b[i] = 1
 
-    # A few passes to keep memory active.
-    step = 97
-    for _ in range(3):
-        s = 0
-        for i in range(0, size, step * 1024):
-            s ^= b[i]
+    # Stream through the whole buffer a few times (forces real memory traffic)
+    for _ in range(2):
+        for i in range(0, size, 64):
             b[i] = (b[i] + 1) & 0xFF
-        if s == 257:
-            print("wow")
 
 def disk_work(N_mib: int) -> None:
     # Disk I/O-bound: write + fsync + read + hash a file of N MiB
