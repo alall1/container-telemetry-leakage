@@ -18,6 +18,9 @@ analyze: venv
 	$(PIP) install -q pandas scikit-learn matplotlib
 	$(PY) analysis/analyze.py
 
+baseline:
+	./scripts/baseline.sh mvp_v0.1
+
 clean:
 	rm -f data/dataset.csv
 	rm -rf results/*
