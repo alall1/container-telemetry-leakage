@@ -2,11 +2,12 @@ import argparse
 import hashlib
 import os
 import time
+import gzip
+from io import BytesIO
 
 PAGE = 4096
 
 def cpu_work(N: int) -> None:
-    # CPU-bound: repeated hashing on small buffer
     buf = b"x" * 64
     h = b""
     for _ in range(N):
@@ -16,17 +17,15 @@ def mem_work(N_mib: int) -> None:
     size = N_mib * 1024 * 1024
     b = bytearray(size)
 
-    # Touch every page
     for i in range(0, size, PAGE):
         b[i] = 1
 
-    # Stream through the whole buffer a few times (forces real memory traffic)
+    # Stream through the whole buffer a couple times (strong, stable RSS signal)
     for _ in range(2):
         for i in range(0, size, 64):
             b[i] = (b[i] + 1) & 0xFF
 
 def disk_work(N_mib: int) -> None:
-    # Disk I/O-bound: write + fsync + read + hash a file of N MiB
     path = "/tmp/io.bin"
     total = N_mib * 1024 * 1024
     chunk = 1024 * 1024  # 1 MiB
@@ -56,7 +55,6 @@ def disk_work(N_mib: int) -> None:
         pass
 
 def mix_work(N: int) -> None:
-    # Mixed: half memory + CPU proportional + half disk
     mem_mib = max(16, N // 2)
     disk_mib = max(16, N // 2)
     cpu_iters = N * 50_000
@@ -65,12 +63,63 @@ def mix_work(N: int) -> None:
     cpu_work(cpu_iters)
     disk_work(disk_mib)
 
+def make_entropy_buffer(secret_N: int, size_mib: int) -> bytes:
+    size = size_mib * 1024 * 1024
+
+    if secret_N == 0:
+        return b"\x00" * size
+
+    if secret_N == 1:
+        pat = b"ABCD"
+        return (pat * (size // len(pat) + 1))[:size]
+
+    if secret_N == 2:
+        # Medium entropy: pseudo-random from small alphabet
+        alphabet = b"abcdefghijklmnop"  # 16 bytes
+        out = bytearray(size)
+        x = 0x12345678
+        for i in range(size):
+            # tiny LCG for determinism, no external deps
+            x = (1103515245 * x + 12345) & 0x7fffffff
+            out[i] = alphabet[x & 0x0F]
+        return bytes(out)
+
+    # secret_N == 3 (high entropy)
+    return os.urandom(size)
+
+def secret_work(secret_N: int, size_mib: int) -> None:
+    """
+    Secret leakage workload:
+    - Generate fixed-size data whose compressibility depends on secret_N
+    - gzip-compress it
+    - Write compressed output to disk + fsync
+    """
+    raw = make_entropy_buffer(secret_N, size_mib)
+
+    # gzip compress in-memory
+    bio = BytesIO()
+    with gzip.GzipFile(fileobj=bio, mode="wb", compresslevel=6) as gz:
+        gz.write(raw)
+    comp = bio.getvalue()
+
+    # Write compressed output
+    out_path = "/tmp/secret.gz"
+    with open(out_path, "wb") as f:
+        f.write(comp)
+        f.flush()
+        os.fsync(f.fileno())
+
+    try:
+        os.remove(out_path)
+    except FileNotFoundError:
+        pass
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--workload", choices=["cpu", "mem", "disk", "mix"], required=True)
+    p.add_argument("--workload", choices=["cpu", "mem", "disk", "mix", "secret"], required=True)
     p.add_argument("--N", type=int, required=True)
-    # Hold after completion so host telemetry sampling is reliable
-    p.add_argument("--hold_ms", type=int, default=750)
+    p.add_argument("--size_mib", type=int, default=128)  # used by secret workload only
+    p.add_argument("--hold_ms", type=int, default=2000)
     args = p.parse_args()
 
     if args.workload == "cpu":
@@ -81,6 +130,10 @@ def main():
         disk_work(args.N)
     elif args.workload == "mix":
         mix_work(args.N)
+    elif args.workload == "secret":
+        if args.N not in (0, 1, 2, 3):
+            raise SystemExit("secret workload requires --N in {0,1,2,3}")
+        secret_work(args.N, args.size_mib)
 
     time.sleep(args.hold_ms / 1000.0)
 
