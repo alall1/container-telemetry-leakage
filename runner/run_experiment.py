@@ -4,21 +4,19 @@ import random
 import subprocess
 import time
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Optional
 
 IMAGE = "twc:mvp"
 OUT_CSV = "data/dataset.csv"
 
-CLK_TCK = os.sysconf(os.sysconf_names["SC_CLK_TCK"])
-
 @dataclass
-class TelemetrySample:
-    cpu_seconds: float        # total CPU time (user+sys) in seconds
-    rss_bytes: int            # resident set size in bytes
-    read_bytes: int           # bytes read (best-effort)
-    write_bytes: int          # bytes written (best-effort)
+class CgSample:
+    usage_usec: int
+    mem_current: int
+    rbytes: int
+    wbytes: int
 
 def sh(cmd: list[str], check=True) -> str:
     r = subprocess.run(
@@ -63,49 +61,6 @@ def get_container_pid(name: str) -> int:
     except Exception:
         return 0
 
-# ---------- /proc fallback (always available if pid exists) ----------
-
-def proc_exists(pid: int) -> bool:
-    return Path(f"/proc/{pid}").exists()
-
-def read_proc_cpu_seconds(pid: int) -> float:
-    # /proc/<pid>/stat: utime at field 14, stime at field 15 (clock ticks)
-    with open(f"/proc/{pid}/stat", "r") as f:
-        parts = f.read().split()
-    utime_ticks = int(parts[13])
-    stime_ticks = int(parts[14])
-    return (utime_ticks + stime_ticks) / CLK_TCK
-
-def read_proc_rss_bytes(pid: int) -> int:
-    # /proc/<pid>/status: VmRSS in kB
-    rss_kb = 0
-    with open(f"/proc/{pid}/status", "r") as f:
-        for line in f:
-            if line.startswith("VmRSS:"):
-                rss_kb = int(line.split()[1])
-                break
-    return rss_kb * 1024
-
-def read_proc_io_bytes(pid: int) -> tuple[int, int]:
-    # /proc/<pid>/io: read_bytes, write_bytes (bytes)
-    read_b = 0
-    write_b = 0
-    with open(f"/proc/{pid}/io", "r") as f:
-        for line in f:
-            if line.startswith("read_bytes:"):
-                read_b = int(line.split()[1])
-            elif line.startswith("write_bytes:"):
-                write_b = int(line.split()[1])
-    return read_b, write_b
-
-def sample_proc(pid: int) -> TelemetrySample:
-    cpu_s = read_proc_cpu_seconds(pid)
-    rss_b = read_proc_rss_bytes(pid)
-    r_b, w_b = read_proc_io_bytes(pid)
-    return TelemetrySample(cpu_s, rss_b, r_b, w_b)
-
-# ---------- cgroup v2 (preferred when present) ----------
-
 def get_cgroup_dir_from_pid(pid: int) -> Optional[Path]:
     # cgroup v2 line: "0::/system.slice/docker-<id>.scope"
     try:
@@ -128,37 +83,43 @@ def read_kv_file(path: Path) -> dict[str, int]:
         d[k] = int(v)
     return d
 
-def cgroup_available(cg: Path) -> bool:
-    # We require at least memory.current and cpu.stat to be present.
-    return (cg / "memory.current").exists() and (cg / "cpu.stat").exists()
-
-def sample_cgroup(cg: Path) -> TelemetrySample:
-    # CPU usage in usec via cpu.stat (usage_usec)
-    cpu = read_kv_file(cg / "cpu.stat")
-    usage_usec = cpu.get("usage_usec", 0)
-    cpu_s = usage_usec / 1e6
-
-    rss_b = int((cg / "memory.current").read_text().strip())
-
-    # io.stat sums rbytes/wbytes across devices
+def read_io_bytes(cg: Path) -> tuple[int, int]:
     rbytes = 0
     wbytes = 0
     io_path = cg / "io.stat"
-    if io_path.exists():
-        for ln in io_path.read_text().strip().splitlines():
-            toks = ln.split()
-            for t in toks[1:]:
-                if t.startswith("rbytes="):
-                    rbytes += int(t.split("=", 1)[1])
-                elif t.startswith("wbytes="):
-                    wbytes += int(t.split("=", 1)[1])
+    if not io_path.exists():
+        return 0, 0
+    for ln in io_path.read_text().strip().splitlines():
+        toks = ln.split()
+        for t in toks[1:]:
+            if t.startswith("rbytes="):
+                rbytes += int(t.split("=", 1)[1])
+            elif t.startswith("wbytes="):
+                wbytes += int(t.split("=", 1)[1])
+    return rbytes, wbytes
 
-    return TelemetrySample(cpu_s, rss_b, rbytes, wbytes)
+def sample_cgroup(cg: Path) -> CgSample:
+    cpu = read_kv_file(cg / "cpu.stat")
+    usage_usec = cpu.get("usage_usec", 0)
 
-# ---------- runner ----------
+    mem_current = int((cg / "memory.current").read_text().strip())
+
+    rbytes, wbytes = read_io_bytes(cg)
+    return CgSample(usage_usec, mem_current, rbytes, wbytes)
+
+def wait_for_cgroup(pid: int, timeout_s: float = 1.5) -> Optional[Path]:
+    # Wait until cg path exists and key files appear
+    t_end = time.time() + timeout_s
+    while time.time() < t_end:
+        cg = get_cgroup_dir_from_pid(pid)
+        if cg is not None:
+            if (cg / "cpu.stat").exists() and (cg / "memory.current").exists():
+                return cg
+        time.sleep(0.05)
+    return None
 
 def run_one(workload: str, N: int, intensity: str, rep: int,
-            hold_ms: int = 750, poll_interval_s: float = 0.2) -> dict:
+            hold_ms: int = 2000, poll_interval_s: float = 0.1) -> dict:
     run_id = str(uuid.uuid4())
     name = f"twc_{workload}_{intensity}_{rep}_{run_id[:8]}"
 
@@ -175,9 +136,8 @@ def run_one(workload: str, N: int, intensity: str, rep: int,
     ]
 
     t0 = time.monotonic_ns()
-    _cid = sh(cmd, check=True)
+    sh(cmd, check=True)
 
-    # Get PID; if it's 0, container likely exited instantly
     pid = get_container_pid(name)
     if pid <= 0:
         exit_code = get_exit_code(name)
@@ -197,25 +157,9 @@ def run_one(workload: str, N: int, intensity: str, rep: int,
             "exit_code": exit_code,
         }
 
-    cg = get_cgroup_dir_from_pid(pid)
-    use_cg = (cg is not None and cgroup_available(cg))
-
-    # Baseline sample (retry a bit in case the cgroup appears slightly later)
-    s0 = None
-    for _ in range(10):
-        if not proc_exists(pid):
-            break
-        try:
-            if use_cg:
-                s0 = sample_cgroup(cg)  # type: ignore[arg-type]
-            else:
-                s0 = sample_proc(pid)
-            break
-        except FileNotFoundError:
-            time.sleep(0.05)
-
-    if s0 is None:
-        # Could not sample at all; record minimal info
+    cg = wait_for_cgroup(pid)
+    if cg is None:
+        # Could not find cgroup files; fail gracefully
         exit_code = get_exit_code(name)
         t1 = time.monotonic_ns()
         subprocess.run(["docker", "rm", "-f", name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -233,19 +177,19 @@ def run_one(workload: str, N: int, intensity: str, rep: int,
             "exit_code": exit_code,
         }
 
-    cpu0 = s0.cpu_seconds
-    r0, w0 = s0.read_bytes, s0.write_bytes
-    mem_peak = s0.rss_bytes
+    # Baseline
+    s0 = sample_cgroup(cg)
+    last = s0
+    mem_peak = s0.mem_current
 
-    # Poll while container runs
+    # Poll until container exits; keep last-good sample
     while True:
-        if not proc_exists(pid):
-            break
         try:
-            s = sample_cgroup(cg) if use_cg else sample_proc(pid)  # type: ignore[arg-type]
-            mem_peak = max(mem_peak, s.rss_bytes)
+            s = sample_cgroup(cg)
+            last = s
+            mem_peak = max(mem_peak, s.mem_current)
         except FileNotFoundError:
-            # Container/cgroup may have disappeared; stop sampling
+            # Cgroup vanished unexpectedly; use last-good
             break
 
         if not is_running(name):
@@ -257,23 +201,13 @@ def run_one(workload: str, N: int, intensity: str, rep: int,
     runtime_s = (t1 - t0) / 1e9
     runtime_ms = runtime_s * 1000.0
 
-    # Final sample best-effort
-    cpu1 = cpu0
-    r1, w1 = r0, w0
-    if proc_exists(pid):
-        try:
-            sf = sample_cgroup(cg) if use_cg else sample_proc(pid)  # type: ignore[arg-type]
-            cpu1 = sf.cpu_seconds
-            r1, w1 = sf.read_bytes, sf.write_bytes
-            mem_peak = max(mem_peak, sf.rss_bytes)
-        except FileNotFoundError:
-            pass
-
-    cpu_delta_s = max(0.0, cpu1 - cpu0)
+    # Deltas from last-good (not necessarily a final read after exit)
+    cpu_delta_s = max(0.0, (last.usage_usec - s0.usage_usec) / 1e6)
     avg_cpu_percent = (cpu_delta_s / runtime_s * 100.0) if runtime_s > 0 else 0.0
 
-    blk_read_mib = max(0, r1 - r0) / (1024**2)
-    blk_write_mib = max(0, w1 - w0) / (1024**2)
+    blk_read_mib = max(0, last.rbytes - s0.rbytes) / (1024**2)
+    blk_write_mib = max(0, last.wbytes - s0.wbytes) / (1024**2)
+
     max_mem_mib = mem_peak / (1024**2)
 
     exit_code = get_exit_code(name)
