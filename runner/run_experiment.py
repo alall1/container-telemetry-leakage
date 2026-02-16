@@ -76,7 +76,13 @@ def get_cgroup_dir_from_pid(pid: int) -> Optional[Path]:
 
 def read_kv_file(path: Path) -> dict[str, int]:
     d: dict[str, int] = {}
-    for ln in path.read_text().strip().splitlines():
+    try:
+        text = path.read_text()
+    except (FileNotFoundError, OSError) as e:
+        # cgroup scope can vanish mid-read; treat as missing
+        raise FileNotFoundError(str(path)) from e
+
+    for ln in text.strip().splitlines():
         if not ln.strip():
             continue
         k, v = ln.split()
@@ -99,12 +105,26 @@ def read_io_bytes(cg: Path) -> tuple[int, int]:
     return rbytes, wbytes
 
 def sample_cgroup(cg: Path) -> CgSample:
+    # cpu.stat
     cpu = read_kv_file(cg / "cpu.stat")
     usage_usec = cpu.get("usage_usec", 0)
 
-    mem_current = int((cg / "memory.current").read_text().strip())
+    # memory.current
+    try:
+        mem_current = int((cg / "memory.current").read_text().strip())
+    except (FileNotFoundError, OSError) as e:
+        raise FileNotFoundError(str(cg / "memory.current")) from e
 
-    rbytes, wbytes = read_io_bytes(cg)
+    # io.stat (optional)
+    rbytes, wbytes = 0, 0
+    io_path = cg / "io.stat"
+    try:
+        if io_path.exists():
+            rbytes, wbytes = read_io_bytes(cg)
+    except (FileNotFoundError, OSError) as e:
+        # if io.stat disappears, just treat as 0 for this sample
+        rbytes, wbytes = 0, 0
+
     return CgSample(usage_usec, mem_current, rbytes, wbytes)
 
 def wait_for_cgroup(pid: int, timeout_s: float = 1.5) -> Optional[Path]:
