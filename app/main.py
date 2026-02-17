@@ -83,30 +83,56 @@ def make_entropy_buffer(secret_N: int, size_mib: int) -> bytes:
 
     return os.urandom(size)
 
-def cpu_pad_for_ms(pad_ms: int) -> None:
+def pad_file_to_target(f, current_size: int, target_size: int) -> None:
     """
-    Simple mitigation: burn CPU for approximately pad_ms wall-clock time.
-    Uses hashing in a loop to be stable-ish across runs.
+    Append zero bytes until file reaches target_size.
+    If current_size >= target_size, do nothing.
     """
-    if pad_ms <= 0:
+    if current_size >= target_size:
         return
-    end = time.monotonic() + (pad_ms / 1000.0)
-    buf = b"pad" * 64
-    h = b""
-    while time.monotonic() < end:
-        h = hashlib.sha256(buf + h).digest()
+    remaining = target_size - current_size
+    chunk = b"\x00" * (1024 * 1024)  # 1 MiB zeros
+    while remaining > 0:
+        n = min(len(chunk), remaining)
+        f.write(chunk[:n])
+        remaining -= n
 
 def secret_work(secret_N: int, size_mib: int, mitigation: str) -> None:
+    """
+    Secret leakage workload:
+    - Generate fixed-size data with entropy controlled by secret_N
+    - gzip-compress it
+    - Write compressed output to disk (fsync)
+    - Mitigation (Phase 3): disk padding to constant output size
+    """
     raw = make_entropy_buffer(secret_N, size_mib)
 
+    # gzip compress in-memory
     bio = BytesIO()
     with gzip.GzipFile(fileobj=bio, mode="wb", compresslevel=6) as gz:
         gz.write(raw)
     comp = bio.getvalue()
 
-    out_path = "/tmp/secret.gz"
+    # Mitigation targets: constant output size (bytes)
+    # Choose targets that are >= max compressed size to avoid truncation.
+    # For size_mib=128, high-entropy gzip output will be close to input size plus small overhead.
+    if mitigation == "none":
+        target_bytes = None
+    elif mitigation == "low":
+        target_bytes = 64 * 1024 * 1024   # 64 MiB constant
+    elif mitigation == "high":
+        target_bytes = 140 * 1024 * 1024  # 140 MiB constant (covers worst-case gzip size)
+    else:
+        raise SystemExit("invalid mitigation level")
+
+    out_path = "/tmp/secret.out"
     with open(out_path, "wb") as f:
         f.write(comp)
+
+        # Disk padding mitigation: pad to constant size
+        if target_bytes is not None:
+            pad_file_to_target(f, current_size=len(comp), target_size=target_bytes)
+
         f.flush()
         os.fsync(f.fileno())
 
@@ -114,18 +140,6 @@ def secret_work(secret_N: int, size_mib: int, mitigation: str) -> None:
         os.remove(out_path)
     except FileNotFoundError:
         pass
-
-    # Mitigation: CPU padding after completing the sensitive computation
-    if mitigation == "none":
-        pad_ms = 0
-    elif mitigation == "low":
-        pad_ms = 200
-    elif mitigation == "high":
-        pad_ms = 800
-    else:
-        raise SystemExit("invalid mitigation level")
-
-    cpu_pad_for_ms(pad_ms)
 
 def main():
     p = argparse.ArgumentParser()
