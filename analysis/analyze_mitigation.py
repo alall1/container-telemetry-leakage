@@ -15,7 +15,7 @@ FEATURES = [
     "avg_cpu_percent",
     "max_mem_mib",
     "blk_read_mib",
-    "blk_write_mib",
+#    "blk_write_mib",
 ]
 
 MITIGATION_ORDER = ["none", "low", "high"]

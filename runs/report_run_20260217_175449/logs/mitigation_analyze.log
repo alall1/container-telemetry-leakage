@@ -1,0 +1,5 @@
+python3 -m venv .venv
+.venv/bin/pip install -q --upgrade pip
+.venv/bin/pip install -q pandas scikit-learn matplotlib
+.venv/bin/python analysis/analyze_mitigation.py
+Wrote results/mitigation_summary.md and plots.

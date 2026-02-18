@@ -1,4 +1,24 @@
-lscpu:
+=== DATE ===
+2026-02-17T17:54:57-08:00
+=== HOST ===
+ Static hostname: linux
+       Icon name: computer-vm
+         Chassis: vm 🖴
+      Machine ID: ac338340fdaa48a58d4e99899919970f
+         Boot ID: 4892a07792c145b58ac09039084b4de5
+    AF_VSOCK CID: 1
+  Virtualization: qemu
+Operating System: Debian GNU/Linux 13 (trixie)
+          Kernel: Linux 6.12.69+deb13-arm64
+    Architecture: arm64
+ Hardware Vendor: QEMU
+  Hardware Model: QEMU Virtual Machine
+Firmware Version: 0.0.0
+   Firmware Date: Fri 2015-02-06
+    Firmware Age: 11y 1w 5d
+=== KERNEL ===
+Linux linux 6.12.69+deb13-arm64 #1 SMP Debian 6.12.69-1 (2026-02-08) aarch64 GNU/Linux
+=== CPU ===
 Architecture:                            aarch64
 CPU op-mode(s):                          64-bit
 Byte Order:                              Little Endian
@@ -32,8 +52,40 @@ Vulnerability Srbds:                     Not affected
 Vulnerability Tsa:                       Not affected
 Vulnerability Tsx async abort:           Not affected
 Vulnerability Vmscape:                   Not affected
-
-free -h:
+=== MEM ===
                total        used        free      shared  buff/cache   available
-Mem:           3.8Gi       558Mi       1.0Gi       4.8Mi       2.4Gi       3.3Gi
+Mem:           3.8Gi       379Mi       2.8Gi       4.8Mi       791Mi       3.5Gi
 Swap:          3.3Gi          0B       3.3Gi
+=== DISK ===
+Filesystem      Size  Used Avail Use% Mounted on
+udev            1.9G     0  1.9G   0% /dev
+tmpfs           392M  872K  391M   1% /run
+/dev/vda3        59G  3.3G   53G   6% /
+tmpfs           2.0G     0  2.0G   0% /dev/shm
+efivarfs        256K   15K  242K   6% /sys/firmware/efi/efivars
+tmpfs           5.0M     0  5.0M   0% /run/lock
+tmpfs           1.0M     0  1.0M   0% /run/credentials/systemd-journald.service
+tmpfs           2.0G     0  2.0G   0% /tmp
+/dev/vda2       977M  9.4M  968M   1% /boot/efi
+tmpfs           1.0M     0  1.0M   0% /run/credentials/serial-getty@ttyAMA0.service
+tmpfs           1.0M     0  1.0M   0% /run/credentials/getty@tty1.service
+tmpfs           392M   16K  392M   1% /run/user/1000
+=== DOCKER VERSION ===
+Docker version 29.2.1, build a5c7197
+=== DOCKER INFO (filtered) ===
+ Version:    29.2.1
+    Version:  v0.31.1
+    Version:  v5.0.2
+ Server Version: 29.2.1
+ Storage Driver: overlayfs
+  driver-type: io.containerd.snapshotter.v1
+ Logging Driver: json-file
+ Cgroup Driver: systemd
+ Cgroup Version: 2
+ containerd version: dea7da592f5d1d2b7755e3a161be07f43fad8f75
+ runc version: v1.3.4-0-gd6d73eb8
+ init version: de40ad0
+  cgroupns
+ Kernel Version: 6.12.69+deb13-arm64
+=== CGROUP FS ===
+cgroup2fs

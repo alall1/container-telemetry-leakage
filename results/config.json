@@ -1,9 +1,0 @@
-{
-  "workloads": ["cpu", "mem", "disk", "mix"],
-  "intensity_levels": ["low", "med", "high"],
-  "repetitions_per_config": 30,
-  "resource_limits": { "cpus": 1, "memory": "512m", "network": "none" },
-  "features": ["runtime_ms", "avg_cpu_percent", "max_mem_mib", "blk_read_mib", "blk_write_mib"],
-  "classifier": "logistic_regression_scaled",
-  "notes": "Telemetry collected from host via cgroup v2; single VM; Docker only."
-}

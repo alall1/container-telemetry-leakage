@@ -97,42 +97,53 @@ def pad_file_to_target(f, current_size: int, target_size: int) -> None:
         f.write(chunk[:n])
         remaining -= n
 
+def burn_cpu_until(deadline: float) -> None:
+    """
+    Busy loop (hashing) until time.monotonic() >= deadline.
+    Used for time equalization mitigation.
+    """
+    buf = b"timepad" * 64
+    h = b""
+    while time.monotonic() < deadline:
+        h = hashlib.sha256(buf + h).digest()
+
 def secret_work(secret_N: int, size_mib: int, mitigation: str) -> None:
     """
     Secret leakage workload:
     - Generate fixed-size data with entropy controlled by secret_N
     - gzip-compress it
-    - Write compressed output to disk (fsync)
-    - Mitigation (Phase 3): disk padding to constant output size
+    - Write output to disk + fsync
+    - Mitigation: disk padding (constant output size) + time padding (constant-ish runtime)
     """
+    t_start = time.monotonic()
+
     raw = make_entropy_buffer(secret_N, size_mib)
 
-    # gzip compress in-memory
     bio = BytesIO()
     with gzip.GzipFile(fileobj=bio, mode="wb", compresslevel=6) as gz:
         gz.write(raw)
     comp = bio.getvalue()
 
-    # Mitigation targets: constant output size (bytes)
-    # Choose targets that are >= max compressed size to avoid truncation.
-    # For size_mib=128, high-entropy gzip output will be close to input size plus small overhead.
+    # Mitigation parameters
     if mitigation == "none":
         target_bytes = None
+        min_total_s = None
     elif mitigation == "low":
+        # Partially reduces size leakage; also dampens runtime leakage by enforcing a minimum total time
         target_bytes = 64 * 1024 * 1024   # 64 MiB constant
+        min_total_s = 8.0                 # seconds
     elif mitigation == "high":
-        target_bytes = 140 * 1024 * 1024  # 140 MiB constant (covers worst-case gzip size)
+        # Strongly reduces size leakage; enforce a minimum total time above worst-case observed compute time
+        target_bytes = 140 * 1024 * 1024  # 140 MiB constant
+        min_total_s = 18.0                # seconds (>= worst observed ~15s)
     else:
         raise SystemExit("invalid mitigation level")
 
     out_path = "/tmp/secret.out"
     with open(out_path, "wb") as f:
         f.write(comp)
-
-        # Disk padding mitigation: pad to constant size
         if target_bytes is not None:
             pad_file_to_target(f, current_size=len(comp), target_size=target_bytes)
-
         f.flush()
         os.fsync(f.fileno())
 
@@ -140,6 +151,12 @@ def secret_work(secret_N: int, size_mib: int, mitigation: str) -> None:
         os.remove(out_path)
     except FileNotFoundError:
         pass
+
+    # Time equalization mitigation: ensure total secret_work takes at least min_total_s
+    if min_total_s is not None:
+        deadline = t_start + min_total_s
+        if time.monotonic() < deadline:
+            burn_cpu_until(deadline)
 
 def main():
     p = argparse.ArgumentParser()
@@ -167,4 +184,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
