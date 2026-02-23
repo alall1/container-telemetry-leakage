@@ -1,0 +1,13 @@
+ M data/dataset.csv
+ M data/mitigation_dataset.csv
+ M data/secret_dataset.csv
+ M results/mitigation_accuracy_vs_strength.png
+ M results/mitigation_overhead_vs_strength.png
+ M results/mitigation_summary.md
+ M results/plot_mem.png
+ M results/plot_runtime.png
+ M results/secret_confusion_matrix.png
+ M results/secret_plot_blk_write.png
+ M results/secret_plot_runtime.png
+ M results/secret_summary.md
+?? runs/report_run_20260222_183308/
