@@ -1,1 +1,0 @@
-Linux linux 6.12.69+deb13-arm64 #1 SMP Debian 6.12.69-1 (2026-02-08) aarch64 GNU/Linux
